@@ -5,7 +5,13 @@ import { URL } from "url";
 import { exec as execCb } from "child_process";
 import { promisify } from "util";
 import { createHash, randomBytes, randomUUID } from "crypto";
+import * as fs from "fs";
+import * as path from "path";
 import { getHtml } from "./webviewHtml";
+import { getResearchHtml } from "./research/researchViewHtml";
+import { ResearchAgent } from "./research/ResearchAgent";
+import { getIntegrityHtml } from "./integrity/integrityViewHtml";
+import { buildIntegritySnapshot } from "./integrity/integrityMetrics";
 import { isActionAllowedForMode, normalizeActionForMode, allowedActionsHint } from "./actionRules";
 import {
   ModelStrategy,
@@ -244,6 +250,288 @@ function trimContextByTokens(text: string, maxTokens: number): string {
   }
   const targetChars = Math.max(1, maxTokens * 4);
   return t.slice(0, targetChars) + "\n/* ...trimmed by token budget... */";
+}
+
+function timestampSlug(date = new Date()): string {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
+  const h = String(date.getUTCHours()).padStart(2, "0");
+  const min = String(date.getUTCMinutes()).padStart(2, "0");
+  const s = String(date.getUTCSeconds()).padStart(2, "0");
+  return `${y}${m}${d}-${h}${min}${s}`;
+}
+
+function safeFileName(name: string): string {
+  return name.replace(/[^\w.-]+/g, "_");
+}
+
+function listReportFiles(reportsDir: string, re: RegExp): string[] {
+  if (!fs.existsSync(reportsDir)) {
+    return [];
+  }
+  return fs
+    .readdirSync(reportsDir)
+    .filter((name) => re.test(name))
+    .sort()
+    .map((name) => path.join(reportsDir, name));
+}
+
+function latestReportFile(reportsDir: string, re: RegExp): string | null {
+  const files = listReportFiles(reportsDir, re);
+  if (!files.length) {
+    return null;
+  }
+  return files[files.length - 1];
+}
+
+function sha256File(filePath: string): string {
+  const buf = fs.readFileSync(filePath);
+  return createHash("sha256").update(buf).digest("hex");
+}
+
+async function zipDirectory(sourceDir: string, zipPath: string): Promise<void> {
+  if (process.platform === "win32") {
+    const cmd =
+      `powershell -NoProfile -Command "Compress-Archive -Path '${sourceDir.replace(/'/g, "''")}\\*' -DestinationPath '${zipPath.replace(/'/g, "''")}' -Force"`;
+    await execAsync(cmd, { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 });
+    return;
+  }
+  await execAsync(`zip -rq "${zipPath}" .`, { cwd: sourceDir, timeout: 120_000, maxBuffer: 10 * 1024 * 1024 });
+}
+
+async function signFileWithGpg(opts: {
+  filePath: string;
+  executable: string;
+  keyId?: string;
+  armor: boolean;
+}): Promise<string> {
+  const outExt = opts.armor ? ".asc" : ".sig";
+  const outPath = `${opts.filePath}${outExt}`;
+  const keyArg = opts.keyId ? ` --local-user "${opts.keyId.replace(/"/g, '\\"')}"` : "";
+  const armorArg = opts.armor ? " --armor" : "";
+  const cmd =
+    `"${opts.executable.replace(/"/g, '\\"')}" --batch --yes --detach-sign${armorArg}${keyArg} --output "${outPath.replace(/"/g, '\\"')}" "${opts.filePath.replace(/"/g, '\\"')}"`;
+  await execAsync(cmd, { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 });
+  return outPath;
+}
+
+type IntegrityPgpHealth = {
+  status: "ok" | "missing" | "ambiguous" | "gpg_unavailable" | "not_configured";
+  keyId: string | null;
+  fingerprint: string | null;
+  canSign: boolean | null;
+  secretKeyPresent: boolean | null;
+  publicKeyPresent: boolean | null;
+  createdAt: string | null;
+  expiresAt: string | null;
+  checkedAt: string | null;
+  detail: string | null;
+};
+
+function epochToIso(epochValue: string): string | null {
+  const n = Number(epochValue);
+  if (!Number.isFinite(n) || n <= 0) {
+    return null;
+  }
+  return new Date(n * 1000).toISOString();
+}
+
+function parseGpgKeyring(stdout: string): {
+  fingerprints: string[];
+  secretFingerprints: string[];
+  canSign: boolean;
+  createdAt: string | null;
+  expiresAt: string | null;
+} {
+  const lines = String(stdout || "").split(/\r?\n/);
+  const fingerprints: string[] = [];
+  const secretFingerprints: string[] = [];
+  let lastRecordType = "";
+  let canSign = false;
+  let createdAt: string | null = null;
+  let expiresAt: string | null = null;
+
+  for (const line of lines) {
+    if (!line.startsWith("pub:") && !line.startsWith("sec:") && !line.startsWith("fpr:")) {
+      continue;
+    }
+    const fields = line.split(":");
+    const rec = fields[0];
+    if (rec === "pub" || rec === "sec") {
+      lastRecordType = rec;
+      const cap = String(fields[11] || "");
+      if (cap.toLowerCase().includes("s")) {
+        canSign = true;
+      }
+      if (!createdAt) {
+        createdAt = epochToIso(String(fields[5] || ""));
+      }
+      if (!expiresAt) {
+        expiresAt = epochToIso(String(fields[6] || ""));
+      }
+      continue;
+    }
+    if (rec === "fpr") {
+      const fpr = String(fields[9] || "").trim();
+      if (!fpr) {
+        continue;
+      }
+      if (lastRecordType === "sec") {
+        secretFingerprints.push(fpr);
+      } else {
+        fingerprints.push(fpr);
+      }
+    }
+  }
+
+  return {
+    fingerprints: [...new Set(fingerprints)],
+    secretFingerprints: [...new Set(secretFingerprints)],
+    canSign,
+    createdAt,
+    expiresAt,
+  };
+}
+
+async function detectPgpHealth(executable: string, keyIdRaw: string): Promise<IntegrityPgpHealth> {
+  const checkedAt = new Date().toISOString();
+  const keyId = String(keyIdRaw || "").trim();
+  if (!keyId) {
+    return {
+      status: "not_configured",
+      keyId: null,
+      fingerprint: null,
+      canSign: null,
+      secretKeyPresent: null,
+      publicKeyPresent: null,
+      createdAt: null,
+      expiresAt: null,
+      checkedAt,
+      detail: "Set ollamaCopilot.pgpKeyId to enable key-ring checks.",
+    };
+  }
+
+  const escapedExe = executable.replace(/"/g, '\\"');
+  const escapedKey = keyId.replace(/"/g, '\\"');
+
+  try {
+    const pubCmd = `"${escapedExe}" --batch --with-colons --list-keys "${escapedKey}"`;
+    const secCmd = `"${escapedExe}" --batch --with-colons --list-secret-keys "${escapedKey}"`;
+    const pub = await execAsync(pubCmd, { timeout: 60_000, maxBuffer: 10 * 1024 * 1024 });
+    const sec = await execAsync(secCmd, { timeout: 60_000, maxBuffer: 10 * 1024 * 1024 }).catch(() => ({ stdout: "" }));
+    const pubParsed = parseGpgKeyring(pub.stdout);
+    const secParsed = parseGpgKeyring(sec.stdout);
+    const allPub = pubParsed.fingerprints.length;
+    const allSec = secParsed.secretFingerprints.length;
+    const firstFpr = secParsed.secretFingerprints[0] || pubParsed.fingerprints[0] || null;
+
+    if (allPub === 0) {
+      return {
+        status: "missing",
+        keyId,
+        fingerprint: null,
+        canSign: false,
+        secretKeyPresent: false,
+        publicKeyPresent: false,
+        createdAt: null,
+        expiresAt: null,
+        checkedAt,
+        detail: "Configured key not found in key-ring.",
+      };
+    }
+
+    if (allPub > 1 || allSec > 1) {
+      return {
+        status: "ambiguous",
+        keyId,
+        fingerprint: firstFpr,
+        canSign: pubParsed.canSign || secParsed.canSign,
+        secretKeyPresent: allSec > 0,
+        publicKeyPresent: true,
+        createdAt: pubParsed.createdAt || secParsed.createdAt,
+        expiresAt: pubParsed.expiresAt || secParsed.expiresAt,
+        checkedAt,
+        detail: "Multiple keys matched the configured key id. Prefer full fingerprint.",
+      };
+    }
+
+    return {
+      status: allSec > 0 && (pubParsed.canSign || secParsed.canSign) ? "ok" : "missing",
+      keyId,
+      fingerprint: firstFpr,
+      canSign: pubParsed.canSign || secParsed.canSign,
+      secretKeyPresent: allSec > 0,
+      publicKeyPresent: allPub > 0,
+      createdAt: pubParsed.createdAt || secParsed.createdAt,
+      expiresAt: pubParsed.expiresAt || secParsed.expiresAt,
+      checkedAt,
+      detail: allSec > 0 ? "Key resolved." : "Public key found but secret signing key missing.",
+    };
+  } catch (err) {
+    return {
+      status: "gpg_unavailable",
+      keyId,
+      fingerprint: null,
+      canSign: false,
+      secretKeyPresent: false,
+      publicKeyPresent: false,
+      createdAt: null,
+      expiresAt: null,
+      checkedAt,
+      detail: String((err as Error)?.message || err),
+    };
+  }
+}
+
+function buildManifestText(entries: Array<{ relativePath: string; sha256: string }>): string {
+  const lines = [...entries]
+    .sort((a, b) => a.relativePath.localeCompare(b.relativePath))
+    .map((e) => `${String(e.sha256 || "").toLowerCase()}  ${e.relativePath.replace(/\\/g, "/")}`);
+  return `${lines.join("\n")}\n`;
+}
+
+async function unzipArchive(zipPath: string, destinationDir: string): Promise<void> {
+  if (process.platform === "win32") {
+    const cmd =
+      `powershell -NoProfile -Command "Expand-Archive -Path '${zipPath.replace(/'/g, "''")}' -DestinationPath '${destinationDir.replace(/'/g, "''")}' -Force"`;
+    await execAsync(cmd, { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 });
+    return;
+  }
+  await execAsync(`unzip -oq "${zipPath}" -d "${destinationDir}"`, { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 });
+}
+
+async function verifyDetachedSignatureWithGpg(opts: {
+  executable: string;
+  signaturePath: string;
+  filePath: string;
+}): Promise<{ valid: boolean; fingerprint: string | null; output: string }> {
+  const cmd =
+    `"${opts.executable.replace(/"/g, '\\"')}" --batch --status-fd=1 --verify "${opts.signaturePath.replace(/"/g, '\\"')}" "${opts.filePath.replace(/"/g, '\\"')}"`;
+  try {
+    const { stdout, stderr } = await execAsync(cmd, { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 });
+    const lines = `${stdout}\n${stderr}`.split(/\r?\n/);
+    let fingerprint: string | null = null;
+    let valid = false;
+    for (const line of lines) {
+      if (line.includes("[GNUPG:] VALIDSIG ")) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length >= 3) {
+          fingerprint = parts[2];
+        }
+        valid = true;
+      }
+      if (line.includes("[GNUPG:] GOODSIG ")) {
+        valid = true;
+      }
+    }
+    return { valid, fingerprint, output: `${stdout}\n${stderr}`.trim() };
+  } catch (err) {
+    const stdout = String((err as { stdout?: string }).stdout || "");
+    const stderr = String((err as { stderr?: string }).stderr || "");
+    const output = `${stdout}\n${stderr}`.trim();
+    return { valid: false, fingerprint: null, output };
+  }
 }
 
 function extractBestCodeForApply(raw: string): string {
@@ -771,39 +1059,112 @@ async function loadProjectPolicy(cfg: Config): Promise<PolicyConfig> {
   }
   const seen = new Set<string>();
   const dec = new TextDecoder();
+  const enc = new TextEncoder();
+  const remoteCacheFile = vscode.Uri.joinPath(ws, ".genoma_remote_policy_cache.json");
+  const remoteCacheTtlMs = 10 * 60_000;
 
-  const resolveOne = async (relPath: string): Promise<PolicyConfig> => {
-    const safeRel = String(relPath || "").replace(/\\/g, "/").trim();
-    if (!safeRel || safeRel.includes("..")) {
-      return base;
+  type RemoteCacheEntry = { fetchedAt: string; raw: string };
+  let remoteCacheMemo: Record<string, RemoteCacheEntry> | null = null;
+
+  const isRemoteRef = (ref: string): boolean => /^https?:\/\//i.test(String(ref || "").trim());
+  const resolveRef = (parentRef: string | undefined, childRef: string): string => {
+    const child = String(childRef || "").trim();
+    if (!child) {
+      return "";
     }
-    if (seen.has(safeRel)) {
-      return base;
+    if (!parentRef || !isRemoteRef(parentRef)) {
+      return child;
     }
-    seen.add(safeRel);
-    const uri = vscode.Uri.joinPath(ws, safeRel);
     try {
-      const raw = dec.decode(await vscode.workspace.fs.readFile(uri));
+      return new URL(child, parentRef).toString();
+    } catch {
+      return child;
+    }
+  };
+
+  const readRemoteCache = async (): Promise<Record<string, RemoteCacheEntry>> => {
+    if (remoteCacheMemo) {
+      return remoteCacheMemo;
+    }
+    try {
+      const raw = dec.decode(await vscode.workspace.fs.readFile(remoteCacheFile));
+      const parsed = safeJsonParse(raw);
+      remoteCacheMemo =
+        parsed && typeof parsed === "object" ? (parsed as Record<string, RemoteCacheEntry>) : {};
+    } catch {
+      remoteCacheMemo = {};
+    }
+    return remoteCacheMemo;
+  };
+
+  const writeRemoteCache = async (cache: Record<string, RemoteCacheEntry>): Promise<void> => {
+    remoteCacheMemo = cache;
+    const text = JSON.stringify(cache, null, 2) + "\n";
+    await vscode.workspace.fs.writeFile(remoteCacheFile, enc.encode(text));
+  };
+
+  const loadRemotePolicyRaw = async (url: string): Promise<string | null> => {
+    const cache = await readRemoteCache();
+    const now = Date.now();
+    const cached = cache[url];
+    if (cached) {
+      const age = now - (new Date(String(cached.fetchedAt || "")).getTime() || 0);
+      if (age >= 0 && age <= remoteCacheTtlMs && String(cached.raw || "").trim()) {
+        return cached.raw;
+      }
+    }
+    try {
+      const fetched = await fetchText(url, Math.max(2000, cfg.timeoutMs));
+      if (!fetched.trim()) {
+        return cached?.raw || null;
+      }
+      cache[url] = { fetchedAt: new Date().toISOString(), raw: fetched };
+      await writeRemoteCache(cache);
+      return fetched;
+    } catch {
+      return cached?.raw || null;
+    }
+  };
+
+  const resolveOne = async (ref: string, parentRef?: string): Promise<PolicyConfig> => {
+    const resolvedRef = resolveRef(parentRef, ref).replace(/\\/g, "/").trim();
+    if (!resolvedRef) {
+      return base;
+    }
+    if (!isRemoteRef(resolvedRef) && resolvedRef.includes("..")) {
+      return base;
+    }
+    if (seen.has(resolvedRef)) {
+      return base;
+    }
+    seen.add(resolvedRef);
+    try {
+      const raw = isRemoteRef(resolvedRef)
+        ? await loadRemotePolicyRaw(resolvedRef)
+        : dec.decode(await vscode.workspace.fs.readFile(vscode.Uri.joinPath(ws, resolvedRef)));
+      if (!raw) {
+        return base;
+      }
       const ext = parseExtendedPolicyFile(raw);
       let merged = mergePolicyConfigs(base, ext);
 
       const extendsList = Array.isArray(ext.extends)
         ? ext.extends
-        : typeof ext.extends === "string" && ext.extends.trim()
-          ? [ext.extends]
-          : [];
+          : typeof ext.extends === "string" && ext.extends.trim()
+            ? [ext.extends]
+            : [];
       for (const child of extendsList) {
-        const childCfg = await resolveOne(String(child || ""));
+        const childCfg = await resolveOne(String(child || ""), resolvedRef);
         merged = mergePolicyConfigs(childCfg, merged);
       }
 
       const importsList = Array.isArray(ext.imports)
         ? ext.imports
-        : typeof ext.imports === "string" && ext.imports.trim()
-          ? [ext.imports]
-          : [];
+          : typeof ext.imports === "string" && ext.imports.trim()
+            ? [ext.imports]
+            : [];
       for (const imported of importsList) {
-        const importedCfg = await resolveOne(String(imported || ""));
+        const importedCfg = await resolveOne(String(imported || ""), resolvedRef);
         merged = mergePolicyConfigs(importedCfg, merged);
       }
 
@@ -819,7 +1180,7 @@ async function loadProjectPolicy(cfg: Config): Promise<PolicyConfig> {
     }
   };
 
-  return resolveOne(cfg.policyFile);
+  return resolveOne(cfg.policyFile, undefined);
 }
 
 function buildPolicyPreviewMarkdown(
@@ -834,8 +1195,15 @@ function buildPolicyPreviewMarkdown(
   lines.push(`- Risk: ${verdict.riskScore}/${threshold}`);
   lines.push(`- Blocked: ${verdict.blocked ? "yes" : "no"}`);
   lines.push(`- Override allowed: ${verdict.overrideAllowed ? "yes" : "no"}`);
+  lines.push(`- Dual approval required: ${verdict.dualApprovalRequired ? "yes" : "no"}`);
   if (verdict.matchedDomains.length) {
     lines.push(`- Domains: ${verdict.matchedDomains.join(", ")}`);
+  }
+  if (verdict.dualApprovalConditionMatches.length) {
+    lines.push(`- Dual-approval matches: ${verdict.dualApprovalConditionMatches.join(" | ")}`);
+  }
+  if (verdict.denyConditionMatches.length) {
+    lines.push(`- Deny matches: ${verdict.denyConditionMatches.join(" | ")}`);
   }
   if (Number.isFinite(Number(opts?.rollbackRatePct))) {
     lines.push(`- Rollback rate (history): ${Math.round(Number(opts?.rollbackRatePct))}%`);
@@ -2075,6 +2443,47 @@ function post(view: vscode.WebviewView | undefined, msg: WebviewOut): void {
   void view?.webview.postMessage(msg);
 }
 
+function formatPubMedMarkdown(term: string, records: Array<{ pmid: string; title?: string; source?: string }>): string {
+  if (!records.length) {
+    return `Nenhum resultado no PubMed para: ${term}`;
+  }
+  const lines = records.slice(0, 8).map((r) => `- ${r.pmid} | ${r.title || "Sem titulo"} ${r.source ? `(${r.source})` : ""}`);
+  return `Resultados PubMed para: ${term}\n${lines.join("\n")}`;
+}
+
+function formatEnsemblMarkdown(record: { geneSymbol: string; ensemblGeneId?: string; chromosome?: string; start?: number; end?: number } | null): string {
+  if (!record) {
+    return "Nenhuma entrada encontrada no Ensembl.";
+  }
+  const loc = record.chromosome ? `chr${record.chromosome}:${record.start ?? "?"}-${record.end ?? "?"}` : "unknown";
+  return `Ensembl gene ${record.geneSymbol}\n- ID: ${record.ensemblGeneId || "?"}\n- Locus: ${loc}`;
+}
+
+function formatCrossRefMarkdown(query: string, items: Array<{ doi?: string; title?: string }>): string {
+  if (!items.length) {
+    return `Nenhum resultado no CrossRef para: ${query}`;
+  }
+  const lines = items.slice(0, 5).map((r) => `- ${r.doi || "doi?"} | ${r.title || "Sem titulo"}`);
+  return `Resultados CrossRef para: ${query}\n${lines.join("\n")}`;
+}
+
+function formatRankingMarkdown(ranked?: { strategy: string; items: Array<{ pmid: string; title?: string; category: string; signals?: string[] }> }): string {
+  if (!ranked || !ranked.items.length) {
+    return "Ranking de evidencia indisponivel.";
+  }
+  const label = (category: string): string => {
+    if (category === "human_clinical") {return "Humano (clinico)";}
+    if (category === "animal_model") {return "Animal (modelo)";}
+    if (category === "in_vitro") {return "In vitro";}
+    return "Outro";
+  };
+  const lines = ranked.items.slice(0, 8).map((r) => {
+    const signals = r.signals && r.signals.length ? ` [${r.signals.join(", ")}]` : "";
+    return `- ${label(r.category)} | ${r.pmid} | ${r.title || "Sem titulo"}${signals}`;
+  });
+  return `Ranking de evidencia (${ranked.strategy})\n${lines.join("\n")}`;
+}
+
 class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewId = "ollamaCopilot.chatView";
 
@@ -2191,6 +2600,38 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
         await vscode.workspace.fs.writeFile(file, merged);
       });
     await this.applyChainWrite;
+  }
+
+  private async readFederationFacts(): Promise<Record<string, string | number | boolean>> {
+    const ws = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!ws) {
+      return {};
+    }
+    const candidates = [".genoma_federation_event.json", ".federation_event.json"];
+    for (const file of candidates) {
+      try {
+        const uri = vscode.Uri.joinPath(ws, file);
+        const raw = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString("utf8");
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        if (!parsed || typeof parsed !== "object") {
+          continue;
+        }
+        const facts: Record<string, string | number | boolean> = {};
+        const allowed = ["containsPersonalData", "contains_personal_data", "crossBorder", "cross_border", "combinedRiskScore", "combined_risk_score", "purpose"];
+        for (const key of allowed) {
+          const v = parsed[key];
+          if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+            facts[key] = v;
+          }
+        }
+        if (Object.keys(facts).length) {
+          return facts;
+        }
+      } catch {
+        // Ignore missing/invalid context files.
+      }
+    }
+    return {};
   }
 
   private readLastEntryHash(content: string): string | null {
@@ -2596,7 +3037,8 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
     }
     const policy = await loadProjectPolicy(cfg);
     const domainMetrics = await this.readDomainGovernanceStats();
-    const verdict = evaluatePolicy(paths, policy, { patchLinesByPath, domainMetrics });
+    const federationFacts = await this.readFederationFacts();
+    const verdict = evaluatePolicy(paths, policy, { patchLinesByPath, domainMetrics, federationFacts });
     const trustByDomain = computeTrustByDomain(domainMetrics);
     const minTrustScore = minTrustForDomains(verdict.matchedDomains, trustByDomain);
     if (cfg.policyTrustEnabled && verdict.matchedDomains.length && minTrustScore < cfg.policyTrustMinScoreAutoApply) {
@@ -2663,7 +3105,8 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
       return false;
     }
 
-    if (verdict.riskScore >= effectiveThreshold) {
+    const requiresEscalation = verdict.riskScore >= effectiveThreshold || verdict.dualApprovalRequired;
+    if (requiresEscalation) {
       if (!verdict.overrideAllowed) {
         await this.appendApplyChain({
           type: "policy_verdict",
@@ -2692,8 +3135,11 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
         void vscode.window.showErrorMessage("Apply blocked: override disabled for matched domain policy.");
         return false;
       }
+      const promptLabel = verdict.riskScore >= effectiveThreshold
+        ? `High-risk apply (${verdict.riskScore}/${effectiveThreshold}). Continue?`
+        : "Policy requires dual approval for federated context. Continue?";
       const choice = await vscode.window.showWarningMessage(
-        `High-risk apply (${verdict.riskScore}/${effectiveThreshold}). Continue?`,
+        promptLabel,
         { modal: true },
         "Apply Anyway",
         "Cancel"
@@ -2766,7 +3212,8 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       let actorId = "";
       let approverId = "";
-      if (cfg.policyDualApprovalEnabled) {
+      const dualApprovalEnabled = cfg.policyDualApprovalEnabled || verdict.dualApprovalRequired;
+      if (dualApprovalEnabled) {
         const actorInput = await vscode.window.showInputBox({
           title: "Override Actor",
           prompt: "Enter your identifier (user/email) for audit.",
@@ -2851,6 +3298,8 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
           actorId,
           approverId,
           minTrustScore,
+          dualApprovalRequired: verdict.dualApprovalRequired,
+          federationFacts: Object.keys(federationFacts).length ? JSON.stringify(federationFacts) : "",
         },
         cfg.telemetryOptIn
       );
@@ -2875,6 +3324,9 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
         risk: verdict.riskScore,
         threshold: effectiveThreshold,
         overrideUsed: true,
+        dualApprovalRequired: verdict.dualApprovalRequired,
+        denyConditionMatches: verdict.denyConditionMatches,
+        dualApprovalConditionMatches: verdict.dualApprovalConditionMatches,
         justification,
         actorId,
         approverId,
@@ -2941,6 +3393,9 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
       canceled: false,
       risk: verdict.riskScore,
       threshold: effectiveThreshold,
+      dualApprovalRequired: verdict.dualApprovalRequired,
+      denyConditionMatches: verdict.denyConditionMatches,
+      dualApprovalConditionMatches: verdict.dualApprovalConditionMatches,
       minTrustScore,
       overrideUsed: false,
       domains: verdict.matchedDomains,
@@ -3720,6 +4175,199 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 }
 
+class ResearchViewProvider implements vscode.WebviewViewProvider {
+  public static readonly viewId = "ollamaCopilot.researchView";
+  private view?: vscode.WebviewView;
+  private readonly researchAgent: ResearchAgent;
+
+  public constructor(researchAgent: ResearchAgent) {
+    this.researchAgent = researchAgent;
+  }
+
+  public resolveWebviewView(webviewView: vscode.WebviewView): void {
+    this.view = webviewView;
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [],
+    };
+    webviewView.webview.html = getResearchHtml(webviewView.webview);
+
+    webviewView.webview.onDidReceiveMessage(async (msg: { type: string; payload?: any }) => {
+      const payload = msg?.payload || {};
+      if (msg.type === "translate") {
+        const result = await this.researchAgent.performTranslateSearch({
+          humanDisease: String(payload.disease || ""),
+          taxonId: String(payload.taxonId || ""),
+          botanicalCompound: String(payload.compound || ""),
+          geneSymbol: String(payload.gene || "").trim() || undefined,
+        });
+        const out = [
+          formatRankingMarkdown(result.ranked),
+          "",
+          formatPubMedMarkdown(result.pubmed?.query || "", result.pubmed?.records || []),
+          "",
+          formatEnsemblMarkdown(result.ensembl || null),
+          "",
+          formatCrossRefMarkdown(result.crossref?.query || "", result.crossref?.items || []),
+        ].join("\n");
+        void this.view?.webview.postMessage({ type: "result", payload: out });
+        return;
+      }
+      if (msg.type === "pubmed") {
+        const term = String(payload.disease || payload.compound || payload.gene || "").trim();
+        const res = await this.researchAgent.searchPubMed(term, 10);
+        void this.view?.webview.postMessage({ type: "result", payload: formatPubMedMarkdown(term, res.records) });
+        return;
+      }
+      if (msg.type === "genome") {
+        const gene = String(payload.gene || "").trim();
+        const res = await this.researchAgent.searchEnsemblGene(gene, "homo_sapiens");
+        void this.view?.webview.postMessage({ type: "result", payload: formatEnsemblMarkdown(res) });
+        return;
+      }
+      if (msg.type === "evidence") {
+        const gene = String(payload.gene || "").trim();
+        const plant = String(payload.compound || "").trim();
+        const term = `${gene}[Title/Abstract] AND "${plant}"[Title/Abstract]`;
+        const res = await this.researchAgent.searchPubMed(term, 10);
+        void this.view?.webview.postMessage({ type: "result", payload: formatPubMedMarkdown(term, res.records) });
+      }
+    });
+  }
+
+  public prefill(payload: { disease?: string; compound?: string; taxonId?: string; gene?: string }): void {
+    void this.view?.webview.postMessage({ type: "prefill", payload });
+  }
+}
+
+class IntegrityViewProvider implements vscode.WebviewViewProvider {
+  public static readonly viewId = "ollamaCopilot.integrityView";
+  private view?: vscode.WebviewView;
+  private lastWorkspaceRoot?: string;
+
+  public resolveWebviewView(webviewView: vscode.WebviewView): void {
+    this.view = webviewView;
+    this.lastWorkspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [],
+    };
+    webviewView.webview.html = getIntegrityHtml(webviewView.webview);
+
+    webviewView.webview.onDidReceiveMessage(async (msg: { type: string; payload?: { base64?: string } }) => {
+      if (msg?.type === "refresh") {
+        await this.refresh();
+        return;
+      }
+      if (msg?.type === "exportPngData") {
+        const wsRoot = this.lastWorkspaceRoot || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!wsRoot) {
+          return;
+        }
+        const b64 = String(msg?.payload?.base64 || "").trim();
+        if (!b64) {
+          return;
+        }
+        const reportsDir = path.join(wsRoot, "reports");
+        fs.mkdirSync(reportsDir, { recursive: true });
+        const filePath = path.join(reportsDir, `integrity-dashboard-${timestampSlug()}.png`);
+        fs.writeFileSync(filePath, Buffer.from(b64, "base64"));
+        void vscode.window.showInformationMessage(`Integrity dashboard PNG exported: ${path.relative(wsRoot, filePath)}`);
+      }
+    });
+
+    void this.refresh();
+  }
+
+  public async refresh(): Promise<void> {
+    const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!wsRoot || !this.view) {
+      return;
+    }
+    this.lastWorkspaceRoot = wsRoot;
+    const cfg = vscode.workspace.getConfiguration("ollamaCopilot");
+    const enabled = Boolean(cfg.get("integrityDashboardEnabled", true));
+    const gpgExecutable = String(cfg.get("pgpExecutable", "gpg") || "gpg").trim();
+    const pgpKeyId = String(cfg.get("pgpKeyId", "") || "").trim();
+    const pgpHealth = await detectPgpHealth(gpgExecutable, pgpKeyId);
+    if (!enabled) {
+      await this.view.webview.postMessage({
+        type: "snapshot",
+        payload: {
+          generatedAt: new Date().toISOString(),
+          window: { from: new Date().toISOString(), to: new Date().toISOString() },
+          compliance: { domains: [] },
+          evidenceSources: [],
+          reproducibility: {
+            overallScore: 0,
+            components: {
+              sealIntegrity: 0,
+              evidenceDiversity: 0,
+              validationQuality: 0,
+              rollbackStability: 0,
+            },
+          },
+          sealHealth: {
+            latestSealFile: null,
+            algorithm: null,
+            strictVerified: null,
+            digest: null,
+            sealedAt: null,
+            sealAgeHours: null,
+            stale: null,
+            expectedLineCount: null,
+            computedLineCount: null,
+          },
+          identity: { actorId: null, orcidId: null },
+          diagnostics: { hasApplyChain: false, hasInferenceCustody: false },
+          pgpHealth,
+          evidencePackageVerification: {
+            file: null,
+            packageFile: null,
+            signatureValid: null,
+            manifestFileCount: null,
+            allFilesValid: null,
+            signerFingerprint: null,
+            verifiedAt: null,
+          },
+        },
+      });
+      return;
+    }
+    const windowDays = Math.max(1, Number(cfg.get("integrityDashboardWindowDays", 30)));
+    const staleHours = Math.max(1, Number(cfg.get("integritySealStaleHours", 24)));
+    const orcidId = String(cfg.get("researcherOrcidId", "") || "").trim();
+    const snapshot = buildIntegritySnapshot(wsRoot, windowDays, staleHours, orcidId, pgpHealth);
+    await this.view.webview.postMessage({ type: "snapshot", payload: snapshot });
+  }
+
+  public async exportPng(): Promise<void> {
+    if (!this.view) {
+      return;
+    }
+    await this.view.webview.postMessage({ type: "requestExportPng" });
+  }
+}
+
+class ResearchCodeActionProvider implements vscode.CodeActionProvider {
+  public provideCodeActions(
+    document: vscode.TextDocument,
+    range: vscode.Range
+  ): vscode.CodeAction[] | undefined {
+    const selection = document.getText(range).trim();
+    if (!selection) {
+      return;
+    }
+    const action = new vscode.CodeAction("Research on GENOMA", vscode.CodeActionKind.Refactor);
+    action.command = {
+      command: "ollamaCopilot.researchFromSelection",
+      title: "Research on GENOMA",
+      arguments: [selection],
+    };
+    return [action];
+  }
+}
+
 /** ---------------- Super Chat Participant ---------------- */
 
 type ChatState = {
@@ -3781,7 +4429,8 @@ class SuperChatParticipant {
     private store: ChatStateStore,
     private telemetry: TelemetryLogger,
     private perf: ModelPerformanceService,
-    private adaptive: AdaptiveStrategyService
+    private adaptive: AdaptiveStrategyService,
+    private researchAgent: ResearchAgent
   ) {}
 
   register(): void {
@@ -3841,6 +4490,10 @@ class SuperChatParticipant {
               "- `/temp <0..2>`: temperatura",
               "- `/status`: mostra estado da sessao",
               "- `/reset`: reseta estado da sessao",
+              "- `/pubmed <termo>`: busca evidencia no PubMed",
+              "- `/genome <gene>`: busca gene no Ensembl",
+              "- `/evidence <planta> <gene>`: cruza planta+gene no PubMed",
+              "- `/translate <doenca> | <taxonId> | <composto> [| gene]`: ponte translacional",
             ].join("\n")
           );
           return;
@@ -3947,6 +4600,70 @@ class SuperChatParticipant {
         if (text.startsWith("/reset")) {
           this.store.reset(sessionId);
           stream.markdown("OK: sessao resetada.");
+          return;
+        }
+
+        if (text.startsWith("/pubmed")) {
+          const term = text.replace(/^\/pubmed\s*/i, "").trim();
+          if (!term) {
+            stream.markdown("Use: `/pubmed <termo>`");
+            return;
+          }
+          const res = await this.researchAgent.searchPubMed(term, 8);
+          stream.markdown(formatPubMedMarkdown(term, res.records));
+          return;
+        }
+
+        if (text.startsWith("/genome")) {
+          const gene = text.replace(/^\/genome\s*/i, "").trim();
+          if (!gene) {
+            stream.markdown("Use: `/genome <gene>`");
+            return;
+          }
+          const res = await this.researchAgent.searchEnsemblGene(gene, "homo_sapiens");
+          stream.markdown(formatEnsemblMarkdown(res));
+          return;
+        }
+
+        if (text.startsWith("/evidence")) {
+          const raw = text.replace(/^\/evidence\s*/i, "").trim();
+          const parts = raw.split(/\s+/).filter(Boolean);
+          if (parts.length < 2) {
+            stream.markdown("Use: `/evidence <planta> <gene>`");
+            return;
+          }
+          const plant = parts[0];
+          const gene = parts.slice(1).join(" ");
+          const term = `${gene}[Title/Abstract] AND "${plant}"[Title/Abstract]`;
+          const res = await this.researchAgent.searchPubMed(term, 8);
+          stream.markdown(formatPubMedMarkdown(term, res.records));
+          return;
+        }
+
+        if (text.startsWith("/translate")) {
+          const raw = text.replace(/^\/translate\s*/i, "").trim();
+          const parts = raw.split("|").map((p) => p.trim()).filter(Boolean);
+          if (parts.length < 3) {
+            stream.markdown("Use: `/translate <doenca> | <taxonId> | <composto> [| gene]`");
+            return;
+          }
+          const disease = parts[0];
+          const taxonId = parts[1];
+          const compound = parts[2];
+          const gene = parts[3];
+          const res = await this.researchAgent.performTranslateSearch({
+            humanDisease: disease,
+            taxonId,
+            botanicalCompound: compound,
+            geneSymbol: gene || undefined,
+          });
+          stream.markdown(formatRankingMarkdown(res.ranked));
+          stream.markdown("");
+          stream.markdown(formatPubMedMarkdown(res.pubmed?.query || "", res.pubmed?.records || []));
+          stream.markdown("");
+          stream.markdown(formatEnsemblMarkdown(res.ensembl || null));
+          stream.markdown("");
+          stream.markdown(formatCrossRefMarkdown(res.crossref?.query || "", res.crossref?.items || []));
           return;
         }
 
@@ -4478,6 +5195,15 @@ export function activate(context: vscode.ExtensionContext): void {
   const perf = new ModelPerformanceService(context);
   const adaptive = new AdaptiveStrategyService(context);
   const store = new ChatStateStore();
+  const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const researchAgent = new ResearchAgent({
+    ncbiApiKey: process.env.NCBI_API_KEY,
+    ncbiEmail: process.env.NCBI_EMAIL,
+    cachePath: wsRoot ? path.join(wsRoot, ".genoma_research_cache.json") : undefined,
+    custodyPath: wsRoot ? path.join(wsRoot, ".genoma_research_custody.jsonl") : undefined,
+    cacheTtlMs: 7 * 24 * 60 * 60 * 1000,
+    enforceSchema: true,
+  });
 
   // Webview (painel lateral)
   const viewProvider = new ChatViewProvider(
@@ -4494,6 +5220,11 @@ export function activate(context: vscode.ExtensionContext): void {
     adaptive
   );
   context.subscriptions.push(vscode.window.registerWebviewViewProvider(ChatViewProvider.viewId, viewProvider));
+
+  const researchViewProvider = new ResearchViewProvider(researchAgent);
+  context.subscriptions.push(vscode.window.registerWebviewViewProvider(ResearchViewProvider.viewId, researchViewProvider));
+  const integrityViewProvider = new IntegrityViewProvider();
+  context.subscriptions.push(vscode.window.registerWebviewViewProvider(IntegrityViewProvider.viewId, integrityViewProvider));
 
   // Status bar quick access (one-click open)
   const statusBtn = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -4537,6 +5268,376 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("ollamaCopilot.verifyCustodyTrail", async () => {
       await viewProvider.verifyCustodyTrailCommand();
     })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ollamaCopilot.openResearchView", async () => {
+      await vscode.commands.executeCommand("workbench.view.extension.ollamaCopilot");
+      await vscode.commands.executeCommand("ollamaCopilot.researchView.focus");
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ollamaCopilot.openIntegrityView", async () => {
+      await vscode.commands.executeCommand("workbench.view.extension.ollamaCopilot");
+      await vscode.commands.executeCommand("ollamaCopilot.integrityView.focus");
+      await integrityViewProvider.refresh();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ollamaCopilot.refreshIntegrityView", async () => {
+      await integrityViewProvider.refresh();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ollamaCopilot.exportIntegritySnapshot", async () => {
+      const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!wsRoot) {
+        void vscode.window.showWarningMessage("Open a workspace to export integrity snapshot.");
+        return;
+      }
+      const cfg = vscode.workspace.getConfiguration("ollamaCopilot");
+      const windowDays = Math.max(1, Number(cfg.get("integrityDashboardWindowDays", 30)));
+      const staleHours = Math.max(1, Number(cfg.get("integritySealStaleHours", 24)));
+      const orcidId = String(cfg.get("researcherOrcidId", "") || "").trim();
+      const gpgExecutable = String(cfg.get("pgpExecutable", "gpg") || "gpg").trim();
+      const pgpKeyId = String(cfg.get("pgpKeyId", "") || "").trim();
+      const pgpHealth = await detectPgpHealth(gpgExecutable, pgpKeyId);
+      const snapshot = buildIntegritySnapshot(wsRoot, windowDays, staleHours, orcidId, pgpHealth);
+      const reportsDir = path.join(wsRoot, "reports");
+      fs.mkdirSync(reportsDir, { recursive: true });
+      const ts = new Date().toISOString().replaceAll(":", "").replaceAll("-", "").replace("T", "-").slice(0, 15);
+      const outPath = path.join(reportsDir, `integrity-snapshot-${ts}.json`);
+      fs.writeFileSync(outPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+      void vscode.window.showInformationMessage(`Integrity snapshot exported: ${path.relative(wsRoot, outPath)}`);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ollamaCopilot.exportIntegrityDashboardPng", async () => {
+      await vscode.commands.executeCommand("ollamaCopilot.openIntegrityView");
+      await integrityViewProvider.exportPng();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ollamaCopilot.buildEvidencePackage", async () => {
+      const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!wsRoot) {
+        void vscode.window.showWarningMessage("Open a workspace to build an evidence package.");
+        return;
+      }
+      const reportsDir = path.join(wsRoot, "reports");
+      fs.mkdirSync(reportsDir, { recursive: true });
+      const slug = timestampSlug();
+      const stagingDir = path.join(reportsDir, `evidence-package-${slug}`);
+      fs.mkdirSync(stagingDir, { recursive: true });
+
+      const selected = new Set<string>();
+      const latestAudit = latestReportFile(reportsDir, /^audit-report-\d{8}-\d{6}\.html$/i);
+      if (latestAudit) {
+        selected.add(latestAudit);
+      }
+      const latestSnapshot = latestReportFile(reportsDir, /^integrity-snapshot-\d{8}-\d{6}\.json$/i);
+      if (latestSnapshot) {
+        selected.add(latestSnapshot);
+      }
+      const latestDashboardPng = latestReportFile(reportsDir, /^integrity-dashboard-\d{8}-\d{6}\.png$/i);
+      if (latestDashboardPng) {
+        selected.add(latestDashboardPng);
+      }
+      for (const seal of listReportFiles(reportsDir, /^audit-seal-\d{8}-\d{6}\.json$/i).slice(-5)) {
+        selected.add(seal);
+      }
+
+      if (selected.size === 0) {
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+        void vscode.window.showWarningMessage("No evidence artifacts found in reports/ to package.");
+        return;
+      }
+
+      const manifest: {
+        generatedAt: string;
+        workspace: string;
+        packageVersion: string;
+        files: Array<{ relativePath: string; sizeBytes: number; sha256: string }>;
+      } = {
+        generatedAt: new Date().toISOString(),
+        workspace: path.basename(wsRoot),
+        packageVersion: "v4.6.1-preview",
+        files: [],
+      };
+
+      for (const source of [...selected].sort()) {
+        const targetName = safeFileName(path.basename(source));
+        const targetPath = path.join(stagingDir, targetName);
+        fs.copyFileSync(source, targetPath);
+        const stat = fs.statSync(targetPath);
+        manifest.files.push({
+          relativePath: targetName,
+          sizeBytes: stat.size,
+          sha256: sha256File(targetPath),
+        });
+      }
+      const manifestPath = path.join(stagingDir, "manifest.json");
+      fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+      const manifestTxtPath = path.join(stagingDir, "manifest.txt");
+      fs.writeFileSync(manifestTxtPath, buildManifestText(manifest.files), "utf8");
+
+      const cfg = vscode.workspace.getConfiguration("ollamaCopilot");
+      const gpgExecutable = String(cfg.get("pgpExecutable", "gpg") || "gpg").trim();
+      const pgpKeyId = String(cfg.get("pgpKeyId", "") || "").trim();
+      const pgpArmor = Boolean(cfg.get("pgpArmor", true));
+      let manifestSignaturePath: string | null = null;
+      try {
+        manifestSignaturePath = await signFileWithGpg({
+          filePath: manifestTxtPath,
+          executable: gpgExecutable,
+          keyId: pgpKeyId || undefined,
+          armor: pgpArmor,
+        });
+      } catch (err) {
+        void vscode.window.showWarningMessage(
+          `Evidence package manifest was created but signature failed: ${String((err as Error)?.message || err)}`
+        );
+      }
+
+      const zipPath = path.join(reportsDir, `evidence-package-${slug}.zip`);
+      try {
+        await zipDirectory(stagingDir, zipPath);
+      } catch (err) {
+        void vscode.window.showErrorMessage(`Failed to create ZIP package: ${String((err as Error)?.message || err)}`);
+        return;
+      } finally {
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+      }
+
+      void vscode.window.showInformationMessage(
+        `Evidence package ready: ${path.relative(wsRoot, zipPath)} (${manifest.files.length} files + manifest${manifestSignaturePath ? " + signature" : ""})`
+      );
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ollamaCopilot.signLatestSealReceipt", async () => {
+      const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!wsRoot) {
+        void vscode.window.showWarningMessage("Open a workspace to sign a seal receipt.");
+        return;
+      }
+      const reportsDir = path.join(wsRoot, "reports");
+      const latestSeal = latestReportFile(reportsDir, /^audit-seal-\d{8}-\d{6}\.json$/i);
+      if (!latestSeal) {
+        void vscode.window.showWarningMessage("No seal receipt found in reports/.");
+        return;
+      }
+      const cfg = vscode.workspace.getConfiguration("ollamaCopilot");
+      const gpgExecutable = String(cfg.get("pgpExecutable", "gpg") || "gpg").trim();
+      const pgpKeyId = String(cfg.get("pgpKeyId", "") || "").trim();
+      const pgpArmor = Boolean(cfg.get("pgpArmor", true));
+      try {
+        const sigPath = await signFileWithGpg({
+          filePath: latestSeal,
+          executable: gpgExecutable,
+          keyId: pgpKeyId || undefined,
+          armor: pgpArmor,
+        });
+        void vscode.window.showInformationMessage(`Seal receipt signed: ${path.relative(wsRoot, sigPath)}`);
+      } catch (err) {
+        void vscode.window.showErrorMessage(`PGP signing failed: ${String((err as Error)?.message || err)}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ollamaCopilot.signEvidencePackage", async () => {
+      const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!wsRoot) {
+        void vscode.window.showWarningMessage("Open a workspace to sign an evidence package.");
+        return;
+      }
+      const reportsDir = path.join(wsRoot, "reports");
+      const latestZip = latestReportFile(reportsDir, /^evidence-package-\d{8}-\d{6}\.zip$/i);
+      if (!latestZip) {
+        void vscode.window.showWarningMessage("No evidence package ZIP found in reports/.");
+        return;
+      }
+      const cfg = vscode.workspace.getConfiguration("ollamaCopilot");
+      const gpgExecutable = String(cfg.get("pgpExecutable", "gpg") || "gpg").trim();
+      const pgpKeyId = String(cfg.get("pgpKeyId", "") || "").trim();
+      const pgpArmor = Boolean(cfg.get("pgpArmor", true));
+      try {
+        const sigPath = await signFileWithGpg({
+          filePath: latestZip,
+          executable: gpgExecutable,
+          keyId: pgpKeyId || undefined,
+          armor: pgpArmor,
+        });
+        void vscode.window.showInformationMessage(`Evidence package signed: ${path.relative(wsRoot, sigPath)}`);
+      } catch (err) {
+        void vscode.window.showErrorMessage(`PGP signing failed: ${String((err as Error)?.message || err)}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ollamaCopilot.verifyEvidencePackageSignature", async () => {
+      const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!wsRoot) {
+        void vscode.window.showWarningMessage("Open a workspace to verify an evidence package.");
+        return;
+      }
+      const reportsDir = path.join(wsRoot, "reports");
+      const latestZip = latestReportFile(reportsDir, /^evidence-package-\d{8}-\d{6}\.zip$/i);
+      if (!latestZip) {
+        void vscode.window.showWarningMessage("No evidence package ZIP found in reports/.");
+        return;
+      }
+
+      const tempDir = path.join(reportsDir, `.evidence-verify-${timestampSlug()}-${Math.random().toString(36).slice(2, 8)}`);
+      fs.mkdirSync(tempDir, { recursive: true });
+      try {
+        await unzipArchive(latestZip, tempDir);
+      } catch (err) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        void vscode.window.showErrorMessage(`Failed to extract evidence package: ${String((err as Error)?.message || err)}`);
+        return;
+      }
+
+      const manifestTxtPath = path.join(tempDir, "manifest.txt");
+      const manifestSigPath = `${manifestTxtPath}.asc`;
+      if (!fs.existsSync(manifestTxtPath) || !fs.existsSync(manifestSigPath)) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        void vscode.window.showWarningMessage("Evidence package is missing manifest.txt or manifest.txt.asc.");
+        return;
+      }
+
+      const cfg = vscode.workspace.getConfiguration("ollamaCopilot");
+      const gpgExecutable = String(cfg.get("pgpExecutable", "gpg") || "gpg").trim();
+      const sigCheck = await verifyDetachedSignatureWithGpg({
+        executable: gpgExecutable,
+        signaturePath: manifestSigPath,
+        filePath: manifestTxtPath,
+      });
+
+      const fileChecks: Array<{ relativePath: string; expectedSha256: string; actualSha256: string | null; status: "ok" | "missing" | "mismatch" }> = [];
+      const manifestLines = fs.readFileSync(manifestTxtPath, "utf8").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      for (const line of manifestLines) {
+        const m = line.match(/^([a-fA-F0-9]{64})\s+(.+)$/);
+        if (!m) {
+          continue;
+        }
+        const expectedSha256 = m[1].toLowerCase();
+        const relPathRaw = m[2].replace(/\\/g, "/");
+        const relPath = path.normalize(relPathRaw).replace(/^(\.\.(\/|\\|$))+/, "");
+        const fullPath = path.resolve(tempDir, relPath);
+        if (!fullPath.startsWith(path.resolve(tempDir))) {
+          fileChecks.push({
+            relativePath: relPathRaw,
+            expectedSha256,
+            actualSha256: null,
+            status: "missing",
+          });
+          continue;
+        }
+        if (!fs.existsSync(fullPath)) {
+          fileChecks.push({
+            relativePath: relPathRaw,
+            expectedSha256,
+            actualSha256: null,
+            status: "missing",
+          });
+          continue;
+        }
+        const actualSha256 = sha256File(fullPath).toLowerCase();
+        fileChecks.push({
+          relativePath: relPathRaw,
+          expectedSha256,
+          actualSha256,
+          status: actualSha256 === expectedSha256 ? "ok" : "mismatch",
+        });
+      }
+
+      const out = {
+        verifiedAt: new Date().toISOString(),
+        packageFile: path.relative(wsRoot, latestZip),
+        manifestFile: path.relative(wsRoot, manifestTxtPath),
+        signatureFile: path.relative(wsRoot, manifestSigPath),
+        signatureValid: sigCheck.valid,
+        signerFingerprint: sigCheck.fingerprint,
+        files: fileChecks,
+        allFilesValid: fileChecks.length > 0 ? fileChecks.every((f) => f.status === "ok") : false,
+      };
+      const outPath = path.join(reportsDir, `evidence-package-verify-${timestampSlug()}.json`);
+      fs.writeFileSync(outPath, `${JSON.stringify(out, null, 2)}\n`, "utf8");
+      fs.rmSync(tempDir, { recursive: true, force: true });
+
+      const summary = out.signatureValid && out.allFilesValid ? "valid" : "issues found";
+      void vscode.window.showInformationMessage(`Evidence package verification ${summary}: ${path.relative(wsRoot, outPath)}`);
+      await integrityViewProvider.refresh();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ollamaCopilot.researchFromSelection", async (selectionText: string) => {
+      const term = String(selectionText || "").trim();
+      if (!term) {
+        return;
+      }
+      const pick = await vscode.window.showQuickPick(
+        [
+          { label: "PubMed", description: "Buscar evidencias no PubMed", id: "pubmed" },
+          { label: "Ensembl", description: "Buscar gene no Ensembl", id: "genome" },
+          { label: "Evidence", description: "Planta + gene no PubMed", id: "evidence" },
+          { label: "Translate", description: "Ponte translacional (doenca|taxon|composto)", id: "translate" },
+        ],
+        { title: "Research on GENOMA" }
+      );
+      if (!pick) {
+        return;
+      }
+      await vscode.commands.executeCommand("ollamaCopilot.openResearchView");
+      if (pick.id === "pubmed") {
+        researchViewProvider.prefill({ disease: term });
+        return;
+      }
+      if (pick.id === "genome") {
+        researchViewProvider.prefill({ gene: term });
+        return;
+      }
+      if (pick.id === "evidence") {
+        researchViewProvider.prefill({ compound: term });
+        return;
+      }
+      if (pick.id === "translate") {
+        const raw = await vscode.window.showInputBox({
+          title: "Translate (doenca | taxonId | composto | gene?)",
+          prompt: "Ex: Alzheimer | 9615 | Curcumin | TP53",
+          value: `${term} | 9615 |`,
+          ignoreFocusOut: true,
+        });
+        if (!raw) {
+          return;
+        }
+        const parts = raw.split("|").map((p) => p.trim());
+        researchViewProvider.prefill({
+          disease: parts[0] || "",
+          taxonId: parts[1] || "",
+          compound: parts[2] || "",
+          gene: parts[3] || "",
+        });
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.languages.registerCodeActionsProvider(
+      { scheme: "file" },
+      new ResearchCodeActionProvider(),
+      { providedCodeActionKinds: [vscode.CodeActionKind.Refactor] }
+    )
   );
 
   // Super Chat helpers (Command Palette)
@@ -4794,7 +5895,8 @@ export function activate(context: vscode.ExtensionContext): void {
     store,
     telemetry,
     perf,
-    adaptive
+    adaptive,
+    researchAgent
   );
   superChat.register();
 

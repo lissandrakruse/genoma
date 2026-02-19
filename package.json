@@ -1,7 +1,7 @@
 {
   "name": "ollama-copilot-devds",
-  "displayName": "Ollama Copilot Dev+DS",
-  "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints.",
+  "displayName": "Genoma",
+  "description": "AI assistant for biomedical engineering workflows with governance, compliance, and auditable code/data operations.",
   "version": "4.1.0",
   "publisher": "LissandraKruseFuganti",
   "license": "MIT",
@@ -40,13 +40,13 @@
     "on-prem",
     "secure ai"
   ],
-  "homepage": "https://github.com/lissandrakruse/ollama-copilot-devds",
+  "homepage": "https://github.com/lissandrakruse/genoma",
   "repository": {
     "type": "git",
-    "url": "https://github.com/lissandrakruse/ollama-copilot-devds.git"
+    "url": "https://github.com/lissandrakruse/genoma.git"
   },
   "bugs": {
-    "url": "https://github.com/lissandrakruse/ollama-copilot-devds/issues"
+    "url": "https://github.com/lissandrakruse/genoma/issues"
   },
   "main": "./dist/extension.js",
   "files": [
@@ -60,12 +60,23 @@
   "activationEvents": [
     "onView:ollamaCopilot.chatView",
     "onChatParticipant:ollamaCopilot.chat",
+    "onView:ollamaCopilot.integrityView",
     "onCommand:ollamaCopilot.openCloudSignup",
     "onCommand:ollamaCopilot.openCloudKeys",
     "onCommand:ollamaCopilot.setCloudApiKey",
     "onCommand:ollamaCopilot.setCloudCatalogPolicy",
     "onCommand:ollamaCopilot.createPolicyTemplate",
     "onCommand:ollamaCopilot.verifyCustodyTrail",
+    "onCommand:ollamaCopilot.openResearchView",
+    "onCommand:ollamaCopilot.openIntegrityView",
+    "onCommand:ollamaCopilot.refreshIntegrityView",
+    "onCommand:ollamaCopilot.exportIntegritySnapshot",
+    "onCommand:ollamaCopilot.exportIntegrityDashboardPng",
+    "onCommand:ollamaCopilot.buildEvidencePackage",
+    "onCommand:ollamaCopilot.signLatestSealReceipt",
+    "onCommand:ollamaCopilot.signEvidencePackage",
+    "onCommand:ollamaCopilot.verifyEvidencePackageSignature",
+    "onCommand:ollamaCopilot.researchFromSelection",
     "onCommand:ollamaCopilot.superChat.chooseProvider",
     "onCommand:ollamaCopilot.superChat.setMode",
     "onCommand:ollamaCopilot.superChat.setContext",
@@ -80,7 +91,7 @@
       "activitybar": [
         {
           "id": "ollamaCopilot",
-          "title": "Ollama Copilot",
+          "title": "Genoma",
           "icon": "media/icon.svg"
         }
       ]
@@ -91,6 +102,16 @@
           "id": "ollamaCopilot.chatView",
           "name": "Chat",
           "type": "webview"
+        },
+        {
+          "id": "ollamaCopilot.integrityView",
+          "name": "Integridade",
+          "type": "webview"
+        },
+        {
+          "id": "ollamaCopilot.researchView",
+          "name": "Pesquisa Translacional",
+          "type": "webview"
         }
       ]
     },
@@ -98,66 +119,106 @@
       {
         "id": "ollamaCopilot.chat",
         "name": "ollama-cloud-chat",
-        "fullName": "Ollama Cloud Chat (Local ou Cloud)",
-        "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints."
+        "fullName": "Genoma Chat (Local ou Cloud)",
+        "description": "AI assistant for biomedical engineering workflows with governance, compliance, and auditable code/data operations."
       }
     ],
     "commands": [
       {
         "command": "ollama-copilot-devds.openChat",
-        "title": "Ollama Copilot: Open Chat"
+        "title": "Genoma: Open Chat"
       },
       {
         "command": "ollama-copilot-devds.selectEndpoint",
-        "title": "Ollama Copilot: Select Endpoint"
+        "title": "Genoma: Select Endpoint"
       },
       {
         "command": "ollama-copilot-devds.refreshModels",
-        "title": "Ollama Copilot: Refresh Models"
+        "title": "Genoma: Refresh Models"
       },
       {
         "command": "ollamaCopilot.superChat.chooseProvider",
-        "title": "Ollama Super Chat: Choose Provider (Local/Cloud) + Model"
+        "title": "Genoma Super Chat: Choose Provider (Local/Cloud) + Model"
       },
       {
         "command": "ollamaCopilot.superChat.setMode",
-        "title": "Ollama Super Chat: Set Mode (code/ds/devds/devops/infra/pbi)"
+        "title": "Genoma Super Chat: Set Mode (code/ds/devds/devops/infra/pbi)"
       },
       {
         "command": "ollamaCopilot.superChat.setContext",
-        "title": "Ollama Super Chat: Set Context (off/selection/file/workspace)"
+        "title": "Genoma Super Chat: Set Context (off/selection/file/workspace)"
       },
       {
         "command": "ollamaCopilot.setModelStrategy",
-        "title": "Ollama Copilot: Set Model Strategy (best_local/user_selected/fastest)"
+        "title": "Genoma: Set Model Strategy (best_local/user_selected/fastest)"
       },
       {
         "command": "ollamaCopilot.superChat.resetSession",
-        "title": "Ollama Super Chat: Reset Session State"
+        "title": "Genoma Super Chat: Reset Session State"
       },
       {
         "command": "ollamaCopilot.openCloudSignup",
-        "title": "Ollama Copilot: Open Ollama Cloud Signup / Keys"
+        "title": "Genoma: Open Ollama Cloud Signup / Keys"
       },
       {
         "command": "ollamaCopilot.openCloudKeys",
-        "title": "Ollama Copilot: Open Cloud API Keys"
+        "title": "Genoma: Open Cloud API Keys"
       },
       {
         "command": "ollamaCopilot.setCloudApiKey",
-        "title": "Ollama Copilot: Set Cloud API Key"
+        "title": "Genoma: Set Cloud API Key"
       },
       {
         "command": "ollamaCopilot.setCloudCatalogPolicy",
-        "title": "Ollama Copilot: Set Cloud Catalog Fallback Policy"
+        "title": "Genoma: Set Cloud Catalog Fallback Policy"
       },
       {
         "command": "ollamaCopilot.createPolicyTemplate",
-        "title": "Ollama Copilot: Create Policy Template"
+        "title": "Genoma: Create Policy Template"
       },
       {
         "command": "ollamaCopilot.verifyCustodyTrail",
-        "title": "Ollama Copilot: Verify Custody Trail"
+        "title": "Genoma: Verify Custody Trail"
+      },
+      {
+        "command": "ollamaCopilot.openResearchView",
+        "title": "Genoma: Open Translational Research Panel"
+      },
+      {
+        "command": "ollamaCopilot.openIntegrityView",
+        "title": "Genoma: Open Integrity Dashboard"
+      },
+      {
+        "command": "ollamaCopilot.refreshIntegrityView",
+        "title": "Genoma: Refresh Integrity Dashboard"
+      },
+      {
+        "command": "ollamaCopilot.exportIntegritySnapshot",
+        "title": "Genoma: Export Integrity Snapshot"
+      },
+      {
+        "command": "ollamaCopilot.exportIntegrityDashboardPng",
+        "title": "Genoma: Export Integrity Dashboard PNG"
+      },
+      {
+        "command": "ollamaCopilot.buildEvidencePackage",
+        "title": "Genoma: Build Evidence Package (ZIP)"
+      },
+      {
+        "command": "ollamaCopilot.signLatestSealReceipt",
+        "title": "Genoma: Sign Latest Seal Receipt (PGP)"
+      },
+      {
+        "command": "ollamaCopilot.signEvidencePackage",
+        "title": "Genoma: Sign Evidence Package (PGP)"
+      },
+      {
+        "command": "ollamaCopilot.verifyEvidencePackageSignature",
+        "title": "Genoma: Verify Evidence Package Signature"
+      },
+      {
+        "command": "ollamaCopilot.researchFromSelection",
+        "title": "Genoma: Research on Selection"
       }
     ],
     "menus": {
@@ -182,7 +243,17 @@
         { "command": "ollamaCopilot.setCloudCatalogPolicy" },
         { "command": "ollamaCopilot.setCloudApiKey" },
         { "command": "ollamaCopilot.createPolicyTemplate" },
-        { "command": "ollamaCopilot.verifyCustodyTrail" }
+        { "command": "ollamaCopilot.verifyCustodyTrail" },
+        { "command": "ollamaCopilot.openResearchView" },
+        { "command": "ollamaCopilot.openIntegrityView" },
+        { "command": "ollamaCopilot.refreshIntegrityView" },
+        { "command": "ollamaCopilot.exportIntegritySnapshot" },
+        { "command": "ollamaCopilot.exportIntegrityDashboardPng" },
+        { "command": "ollamaCopilot.buildEvidencePackage" },
+        { "command": "ollamaCopilot.signLatestSealReceipt" },
+        { "command": "ollamaCopilot.signEvidencePackage" },
+        { "command": "ollamaCopilot.verifyEvidencePackageSignature" },
+        { "command": "ollamaCopilot.researchFromSelection" }
       ]
     },
     "keybindings": [
@@ -194,7 +265,7 @@
       }
     ],
     "configuration": {
-      "title": "Ollama Copilot",
+      "title": "Genoma",
       "properties": {
         "ollamaCopilot.activeEndpointId": {
           "type": "string",
@@ -259,6 +330,45 @@
           "minimum": 0,
           "maximum": 120000,
           "description": "Workspace context cache time in milliseconds to reduce repeated scans."
+        },
+        "ollamaCopilot.integrityDashboardEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the Integrity Dashboard webview for governance and provenance monitoring."
+        },
+        "ollamaCopilot.integrityDashboardWindowDays": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "maximum": 3650,
+          "description": "Time window (days) used to aggregate integrity dashboard metrics."
+        },
+        "ollamaCopilot.researcherOrcidId": {
+          "type": "string",
+          "default": "",
+          "description": "Optional ORCID iD included in integrity dashboard identity context."
+        },
+        "ollamaCopilot.integritySealStaleHours": {
+          "type": "number",
+          "default": 24,
+          "minimum": 1,
+          "maximum": 720,
+          "description": "Seal age threshold (hours) used by Integrity Dashboard to flag stale receipts."
+        },
+        "ollamaCopilot.pgpExecutable": {
+          "type": "string",
+          "default": "gpg",
+          "description": "PGP executable used to sign seal receipts and evidence packages."
+        },
+        "ollamaCopilot.pgpKeyId": {
+          "type": "string",
+          "default": "",
+          "description": "Optional PGP key id or fingerprint used for signing commands."
+        },
+        "ollamaCopilot.pgpArmor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Generate ASCII-armored PGP detached signatures (.asc)."
         },
         "ollamaCopilot.validateCommand": {
           "type": "string",
@@ -456,6 +566,22 @@
     "eval:cases": "node tools/eval-real-cases.mjs",
     "eval:golden": "node tools/eval-golden.mjs",
     "eval:governance": "node tools/eval-governance.mjs",
+    "eval:federation": "node tools/eval-federation-policy.mjs",
+    "eval:citations": "node tools/eval-citations.mjs --in tools/compliance/citation-claims.example.json --out citation-report.json",
+    "eval:phyto-report": "node tools/compliance/validate-phyto-report.mjs --in reports/phyto_genomics_report.jsonl",
+    "genoma:demo": "tsc --project tsconfig.json && node dist/genoma/demo.js",
+    "genoma:run": "tsc --project tsconfig.json && node dist/genoma/runCli.js --mode static --purpose research",
+    "genoma:run:strict": "tsc --project tsconfig.json && node dist/genoma/runCli.js --mode static --purpose research --citationStrict true",
+    "genoma:report": "tsc --project tsconfig.json && node dist/genoma/reportCli.js --mode static --out reports/genoma-report.json",
+    "genoma:benchmark": "tsc --project tsconfig.json && node dist/genoma/benchmarkCli.js",
+    "genoma:audit:report": "node tools/compliance/generate-audit-report.mjs",
+    "genoma:audit:seal": "node tools/compliance/seal-audit-log.mjs",
+    "genoma:audit:verify": "node tools/compliance/verify-audit-seal.mjs",
+    "genoma:privacy:sanitize": "node tools/compliance/sanitize-custody-log.mjs",
+    "genoma:policy:sync": "node tools/compliance/sync-remote-policy.mjs",
+    "genoma:phyto": "node tools/genoma/eval-phyto-genomics.mjs --out reports/phyto_genomics_report.jsonl --summary reports/phyto_genomics_summary.json --csv reports/phyto_genomics_report.csv --meta reports/phyto_genomics_meta.json --cache reports/.phyto_pubmed_cache.json",
+    "genoma:phyto:summary": "node tools/genoma/phyto-summary-table.mjs --in reports/phyto_genomics_summary.json --out reports/phyto_genomics_summary_table.md --csv reports/phyto_genomics_summary_table.csv",
+    "genoma:phyto:rank": "node tools/genoma/rank-evidence.mjs --in reports/phyto_genomics_report.jsonl --out reports/phyto_genomics_ranked.json --md reports/phyto_genomics_ranked.md --csv reports/phyto_genomics_ranked.csv",
     "golden:capture": "node tools/capture-golden-from-log.mjs",
     "ci:quality": "yarn run check-types && yarn run lint && yarn run test && yarn run eval:quality && yarn run eval:cases && yarn run eval:golden",
     "test": "tsc --project tsconfig.json && mocha \"dist/test/**/*.test.js\" --ignore \"dist/test/e2e/**\"",

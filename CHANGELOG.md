@@ -1,6 +1,219 @@
 # Changelog
 
 All notable changes to this extension are documented here.
+GENOMA is a governance-first translational research runtime with audit-grade compliance artifacts.
+
+## Suggestions
+
+Suggestions for improving GENOMA are welcome.
+
+- Open an issue: `https://github.com/lissandrakruse/genoma/issues`
+- Prefix title with: `[Suggestion]`
+- Include: problem, proposed improvement, expected research impact
+- Attach a sample event JSON if possible.
+- Direct contact (email): `t7426541@gmail.com`
+- Direct contact (WhatsApp): `+55 42 99127-4857`
+- Donation support (Pix): `+55 42 99127-4857`
+
+## v4.5.0 - Federated Policy Sync (Preview)
+
+### Added
+- Remote Policy Sync CLI for federated teams: `tools/compliance/sync-remote-policy.mjs` + `yarn run genoma:policy:sync -- --url <remote-policy-url>`.
+- Policy loader now accepts remote `imports` / `extends` URLs (`https://...`) in `.ollama_policies.json`.
+- Audit log sealing command for verifiability: `tools/compliance/seal-audit-log.mjs` + `yarn run genoma:audit:seal`.
+- Audit seal verification command: `tools/compliance/verify-audit-seal.mjs` + `yarn run genoma:audit:verify`.
+
+### Improved
+- Remote policy imports support cache fallback for resilient offline/restricted operation (`.genoma_remote_policy_cache.json`).
+- Remote import resolution now supports URL-relative modules for shared policy bundles across institutions.
+- Privacy Shield now obfuscates local system paths in JSONL logs by default (`genoma:privacy:sanitize`, `--obfuscatePaths true|false`).
+- Audit seal verification now supports strict mode (`genoma:audit:verify -- --strict true`) to enforce digest + file size + line count consistency.
+- Remote policy sync now supports conditional HTTP refresh via `ETag` / `Last-Modified` to avoid unnecessary downloads on unstable lab networks.
+- Path obfuscation now keeps deterministic, human-auditable structure within each run (for example, `C:\Users\<name>\...` becomes `<USER_PATH>\...`).
+- Audit HTML report footer can now display direct seal linkage (`Integrity verified via Seal [SHA-256: ...]`) when a seal receipt is available.
+
+### Quality
+- `yarn run ci:quality` passing with federated policy sync support.
+- Seal receipts are generated in `reports/` with SHA-256 digest metadata for external timestamp/notary publication.
+
+## v4.6.1 - UX Security Refinement
+
+### Added
+- Key-Ring Health Check in Integrity Dashboard for `ollamaCopilot.pgpKeyId` availability and signing readiness.
+- Dashboard status states for PGP readiness: `ok`, `missing`, `ambiguous`, `gpg_unavailable`.
+- PGP key metadata panel in dashboard diagnostics (fingerprint, capabilities, created/expires when available).
+- One-Click Evidence Package now emits `manifest.txt` (SHA-256 per included artifact) plus detached signature `manifest.txt.asc` and registers it in package artifacts.
+- New verification command: `ollamaCopilot.verifyEvidencePackageSignature` for signature + per-file manifest validation.
+
+### Improved
+- Audit HTML report footer can show a visual trust badge when report artifacts are detected inside a PGP-signed Evidence Package.
+- Quick verification context in report footer now includes signature status + signer fingerprint (short form).
+- Evidence consumers can validate individual extracted files against a signed manifest without requiring the original ZIP container.
+
+### Quality
+- `yarn run ci:quality` passing with security UX refinements.
+- Integrity dashboard now surfaces evidence package verification diagnostics from `reports/evidence-package-verify-*.json`.
+
+## v4.6.0 - Integrity Dashboard + Research Identity (Preview)
+
+### Added
+- Integrity Dashboard technical blueprint for implementation and demo readiness: `docs/DASHBOARD_INTEGRITY_V46.md`.
+- Integrity Dashboard webview: `ollamaCopilot.integrityView`.
+- Dashboard commands:
+  - `ollamaCopilot.openIntegrityView`
+  - `ollamaCopilot.refreshIntegrityView`
+  - `ollamaCopilot.exportIntegritySnapshot`
+  - `ollamaCopilot.exportIntegrityDashboardPng`
+  - `ollamaCopilot.buildEvidencePackage`
+  - `ollamaCopilot.signLatestSealReceipt`
+  - `ollamaCopilot.signEvidencePackage`
+- Integrity metrics engine for local workspace artifacts: `src/integrity/integrityMetrics.ts`.
+- Integrity webview renderer: `src/integrity/integrityViewHtml.ts`.
+- New settings:
+  - `ollamaCopilot.integrityDashboardEnabled`
+  - `ollamaCopilot.integrityDashboardWindowDays`
+  - `ollamaCopilot.researcherOrcidId`
+  - `ollamaCopilot.integritySealStaleHours`
+  - `ollamaCopilot.pgpExecutable`
+  - `ollamaCopilot.pgpKeyId`
+  - `ollamaCopilot.pgpArmor`
+- Integrity Dashboard now flags stale seal receipts using configurable age threshold.
+- Integrity metrics now include reproducibility scoring (seal integrity, source diversity, validation quality, rollback stability).
+- One-Click Evidence Package command now creates ZIP bundles with manifest checksums for committee/journal supplementary material.
+- PGP starter commands added for detached-signature workflows over seal receipts and evidence package ZIP artifacts.
+- Integrity Dashboard now supports PNG export for visual evidence capture (`reports/integrity-dashboard-*.png`).
+
+### Planned
+- Optional native screenshot capture integration for environments with restricted canvas export policies.
+
+## v4.4.0 - Clinical Trials + Forensic Genetics Governance Baseline
+
+### Added
+- Strategic roadmap for post-v4.3 cycle planning: `ROADMAP.md`.
+- New policy domain for clinical trial governance: `clinical_trials` in `.ollama_policies.json`.
+- Clinical trial compliance schema: `tools/compliance/clinical-trial-event.schema.json`.
+- Clinical trial compliance example payload: `tools/compliance/clinical-trial-event.example.json`.
+- New policy domain for forensic genetics governance: `forensic_genetics` in `.ollama_policies.json`.
+- Forensic genetics compliance schema: `tools/compliance/forensic-genetics-event.schema.json`.
+- Forensic genetics compliance example payload: `tools/compliance/forensic-genetics-event.example.json`.
+- Human-readable audit report generator: `tools/compliance/generate-audit-report.mjs` + `yarn run genoma:audit:report`.
+- Privacy Shield log sanitizer (JSONL): `tools/compliance/sanitize-custody-log.mjs` + `yarn run genoma:privacy:sanitize`.
+
+### Improved
+- Policy baseline now covers translational research scenarios with stronger deny conditions and dual-approval gates for:
+  - trial phase/cross-border/vulnerable population events
+  - criminal/kinship/cross-border forensic workflows
+- Domain suspension controls expanded for high-risk governance tracks:
+  - `clinical_trials` rollback threshold profile
+  - `forensic_genetics` rollback threshold profile
+- Audit reporting now defaults to timestamped output in `reports/` (for example: `reports/audit-report-YYYYMMDD-HHMMSS.html`).
+- Audit report now includes a methodology section describing translational evidence score priorities and anti-bias logic.
+- Report scripts standardized to `reports/` outputs:
+  - `genoma:report`
+  - `genoma:phyto`
+  - `genoma:phyto:summary`
+  - `genoma:phyto:rank`
+  - `eval:phyto-report`
+
+### Quality
+- JSON policy and compliance artifacts validated.
+- `yarn run ci:quality` passing after governance baseline additions.
+- Local audit artifacts ignored in repository hygiene: `.ollama_copilot_apply_chain.jsonl`, `audit-report.html`.
+- `reports/` ignored by default to avoid report artifact drift in git history.
+- Audit report generation verified with example events (clinical + forensic).
+
+## v4.3.0 - Cross-Domain Phyto-Veterinary Intelligence
+
+### Added
+- Phyto‑vet policy domain with suspension threshold (`botanical_pharmacology`).
+- Phyto safety validator: `tools/compliance/phyto-validator.mjs` (optional registry override).
+- Example registry template: `tools/compliance/phyto-registry.example.json`.
+- Phyto‑genomics batch runner: `tools/genoma/eval-phyto-genomics.mjs` + `yarn run genoma:phyto`.
+- Report schema: `tools/compliance/phyto-genomics-report.schema.json`.
+- Default plants list for batch runner: `tools/genoma/plants.json`.
+- Phyto report validator: `tools/compliance/validate-phyto-report.mjs` + `yarn run eval:phyto-report`.
+- Phyto summary table generator: `tools/genoma/phyto-summary-table.mjs` + `yarn run genoma:phyto:summary`.
+- Evidence ranking generator with anti-bias quotas: `tools/genoma/rank-evidence.mjs` + `yarn run genoma:phyto:rank`.
+- Batch run metadata report: `phyto_genomics_meta.json`.
+- Example registry now includes dog/cat contraindication samples (lily, onion, cannabis, sago palm).
+- ResearchAgent backend for translational search (PubMed + Ensembl + CrossRef): `src/research/ResearchAgent.ts`.
+- Translational research panel (sidebar view): `ollamaCopilot.researchView`.
+- CodeAction "Research on GENOMA" for selected terms (editor).
+
+### Improved
+- Domain policy engine supports per‑domain suspension thresholds.
+- Phyto batch evaluator supports JSONL input, aliases, retry/backoff, and summary output (`phyto_genomics_summary.json`).
+- PubMed lookups now handle `429` rate limits via retries.
+- Batch output includes PubMed records (ESummary) when available.
+- Batch runner supports registry override, cache TTL, and schema validation (`tools/compliance/phyto-genomics-report.schema.json`).
+- Added cache/output artifacts to `.gitignore` (`.phyto_pubmed_cache.json`, `phyto_genomics_report.jsonl`, `phyto_genomics_summary.json`, `phyto_genomics_report.csv`, `phyto_genomics_meta.json`, `phyto_genomics_summary_table.md`, `phyto_genomics_summary_table.csv`).
+- Batch output now includes a CSV export (`phyto_genomics_report.csv`) for downstream analysis.
+- Super Chat slash commands for research: `/pubmed`, `/genome`, `/evidence`, `/translate`.
+- Translate now ranks evidence by priority (human clinical > animal model > in vitro) with keyword signals.
+- EvidenceBalancer applies anti-bias quotas + source diversity for translational ranking.
+- ResearchAgent now uses persistent cache + custody JSONL trail for evidence queries.
+- ResearchAgent adds schema validation, normalization, and per-source metrics.
+
+### Quality
+- Run `tools/compliance/phyto-validator.mjs` before batch inference.
+
+## v4.2.0 - International Biomedical Readiness + Repository Publishing
+
+### Added
+- International biomedical compliance baseline documentation:
+  - `docs/INTERNATIONAL_COMPLIANCE.md`
+- Data-source license registry for federated biomedical datasets:
+  - `DATA_LICENSES.md`
+- JSON schema for ingestion license metadata enforcement:
+  - `tools/compliance/data-license-entry.schema.json`
+- Federated join governance documentation and enforcement artifacts:
+  - `docs/FEDERATED_JOINS.md`
+  - `tools/compliance/federation-event.schema.json`
+  - `.ollama_policies.json` baseline domain `biomedical_federation`
+  - `.genoma_federation_event.example.json` template
+  - `tools/eval-federation-policy.mjs` (`yarn run eval:federation`)
+- Research and validation documentation:
+  - `docs/RESEARCH_PROPOSAL.md`
+  - `docs/EXPERIMENT_PROTOCOL.md`
+  - `docs/PROPOSTAS_MESTRADO.md`
+  - `docs/PRE_PROJETO_MESTRADO.md`
+  - `docs/LANDMARK_CRITERIA.md`
+  - `docs/GENOMA_RUNTIME.md`
+- README international section with compliance and biomedical federation references.
+
+### Improved
+- Marketplace-facing messaging now includes international biomedical governance posture.
+- Added functional federated genomic runtime demo:
+  - `src/genoma/*`
+  - `yarn run genoma:demo`
+  - `yarn run genoma:report`
+  - `yarn run genoma:benchmark`
+- Upgraded research runtime with:
+  - optional live Ensembl connector mode
+  - optional live ClinVar connector mode (NCBI E-utilities with safe fallback)
+  - canonical biomedical ID normalization
+  - score breakdown for candidate prioritization
+  - reproducibility fingerprint report output
+  - benchmark suite for federated ranking behavior
+  - persisted research artifacts (`.genoma_federation_events.jsonl`, `.genoma_inference_custody.jsonl`)
+  - full run CLI (`yarn run genoma:run`)
+  - full run with strict citation gate (`yarn run genoma:run:strict`)
+- Added scientific citation custody module:
+  - DOI/PMID validator (`tools/eval-citations.mjs`)
+  - citation input schema (`tools/compliance/citation-check-input.schema.json`)
+  - example claims input (`tools/compliance/citation-claims.example.json`)
+  - documentation (`docs/CITATION_VALIDATION.md`)
+  - script (`yarn run eval:citations`)
+  - integrated citation audit into full run (`.genoma_citation_audit.jsonl`)
+- Repository hygiene improved by ignoring local audit/telemetry log artifacts:
+  - `.ollama_copilot_log.jsonl`
+  - `.ollama_copilot_telemetry.jsonl`
+- Git publication workflow completed for `main` on `lissandrakruse/genoma`.
+
+### Quality
+- Rebase conflict on `LICENSE` resolved cleanly during publish.
+- Full CI quality gate is recommended before next VS Code Marketplace release:
+  - `yarn run ci:quality`
 
 ## v4.1.0 - Policy Imports + Expanded Heatmap Table
 
