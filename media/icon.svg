@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Ollama Copilot">
+  <g fill="currentColor">
+    <!-- brackets -->
+    <path d="M8 5L4 12l4 7h2l-4-7 4-7H8z"/>
+    <path d="M16 5l4 7-4 7h-2l4-7-4-7h2z"/>
+    <!-- spark/brain dot -->
+    <circle cx="12" cy="12" r="2.5"/>
+  </g>
+</svg>

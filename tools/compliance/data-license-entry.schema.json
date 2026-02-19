@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/schemas/data-license-entry.schema.json",
+  "title": "Data License Entry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source_id",
+    "dataset_name",
+    "dataset_version",
+    "release_date",
+    "license_id",
+    "terms_url",
+    "allowed_use",
+    "attribution_text",
+    "redistribution_allowed",
+    "contains_personal_data",
+    "compliance_reviewed_at",
+    "compliance_owner"
+  ],
+  "properties": {
+    "source_id": {
+      "type": "string",
+      "minLength": 2
+    },
+    "dataset_name": {
+      "type": "string",
+      "minLength": 2
+    },
+    "dataset_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "release_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "license_id": {
+      "type": "string",
+      "minLength": 2
+    },
+    "terms_url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "allowed_use": {
+      "type": "string",
+      "enum": [
+        "research_only",
+        "internal_commercial",
+        "commercial_and_redistribution",
+        "restricted"
+      ]
+    },
+    "attribution_text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "redistribution_allowed": {
+      "type": "boolean"
+    },
+    "contains_personal_data": {
+      "type": "boolean"
+    },
+    "regions_allowed": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 2
+      },
+      "uniqueItems": true
+    },
+    "compliance_reviewed_at": {
+      "type": "string",
+      "format": "date"
+    },
+    "compliance_owner": {
+      "type": "string",
+      "minLength": 2
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+}

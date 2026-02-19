@@ -1,0 +1,477 @@
+{
+  "name": "ollama-copilot-devds",
+  "displayName": "Ollama Copilot Dev+DS",
+  "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints.",
+  "version": "4.1.0",
+  "publisher": "LissandraKruseFuganti",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.109.0"
+  },
+  "categories": ["AI", "Machine Learning", "Other"],
+  "keywords": [
+    "ai",
+    "ollama",
+    "llm",
+    "local ai",
+    "offline ai",
+    "vscode ai",
+    "ai assistant",
+    "copilot",
+    "chat",
+    "code review",
+    "refactor",
+    "test generation",
+    "devops",
+    "infrastructure",
+    "powershell",
+    "data science",
+    "power bi",
+    "dax",
+    "m query",
+    "audit",
+    "governance",
+    "policy",
+    "security",
+    "devtools",
+    "code-review",
+    "privacy",
+    "on-prem",
+    "secure ai"
+  ],
+  "homepage": "https://github.com/lissandrakruse/ollama-copilot-devds",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lissandrakruse/ollama-copilot-devds.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lissandrakruse/ollama-copilot-devds/issues"
+  },
+  "main": "./dist/extension.js",
+  "files": [
+    "dist/**",
+    "media/**",
+    "README.md",
+    "QUALITY.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "activationEvents": [
+    "onView:ollamaCopilot.chatView",
+    "onChatParticipant:ollamaCopilot.chat",
+    "onCommand:ollamaCopilot.openCloudSignup",
+    "onCommand:ollamaCopilot.openCloudKeys",
+    "onCommand:ollamaCopilot.setCloudApiKey",
+    "onCommand:ollamaCopilot.setCloudCatalogPolicy",
+    "onCommand:ollamaCopilot.createPolicyTemplate",
+    "onCommand:ollamaCopilot.verifyCustodyTrail",
+    "onCommand:ollamaCopilot.superChat.chooseProvider",
+    "onCommand:ollamaCopilot.superChat.setMode",
+    "onCommand:ollamaCopilot.superChat.setContext",
+    "onCommand:ollamaCopilot.setModelStrategy",
+    "onCommand:ollamaCopilot.superChat.resetSession",
+    "onCommand:ollama-copilot-devds.openChat",
+    "onCommand:ollama-copilot-devds.selectEndpoint",
+    "onCommand:ollama-copilot-devds.refreshModels"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ollamaCopilot",
+          "title": "Ollama Copilot",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "ollamaCopilot": [
+        {
+          "id": "ollamaCopilot.chatView",
+          "name": "Chat",
+          "type": "webview"
+        }
+      ]
+    },
+    "chatParticipants": [
+      {
+        "id": "ollamaCopilot.chat",
+        "name": "ollama-cloud-chat",
+        "fullName": "Ollama Cloud Chat (Local ou Cloud)",
+        "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints."
+      }
+    ],
+    "commands": [
+      {
+        "command": "ollama-copilot-devds.openChat",
+        "title": "Ollama Copilot: Open Chat"
+      },
+      {
+        "command": "ollama-copilot-devds.selectEndpoint",
+        "title": "Ollama Copilot: Select Endpoint"
+      },
+      {
+        "command": "ollama-copilot-devds.refreshModels",
+        "title": "Ollama Copilot: Refresh Models"
+      },
+      {
+        "command": "ollamaCopilot.superChat.chooseProvider",
+        "title": "Ollama Super Chat: Choose Provider (Local/Cloud) + Model"
+      },
+      {
+        "command": "ollamaCopilot.superChat.setMode",
+        "title": "Ollama Super Chat: Set Mode (code/ds/devds/devops/infra/pbi)"
+      },
+      {
+        "command": "ollamaCopilot.superChat.setContext",
+        "title": "Ollama Super Chat: Set Context (off/selection/file/workspace)"
+      },
+      {
+        "command": "ollamaCopilot.setModelStrategy",
+        "title": "Ollama Copilot: Set Model Strategy (best_local/user_selected/fastest)"
+      },
+      {
+        "command": "ollamaCopilot.superChat.resetSession",
+        "title": "Ollama Super Chat: Reset Session State"
+      },
+      {
+        "command": "ollamaCopilot.openCloudSignup",
+        "title": "Ollama Copilot: Open Ollama Cloud Signup / Keys"
+      },
+      {
+        "command": "ollamaCopilot.openCloudKeys",
+        "title": "Ollama Copilot: Open Cloud API Keys"
+      },
+      {
+        "command": "ollamaCopilot.setCloudApiKey",
+        "title": "Ollama Copilot: Set Cloud API Key"
+      },
+      {
+        "command": "ollamaCopilot.setCloudCatalogPolicy",
+        "title": "Ollama Copilot: Set Cloud Catalog Fallback Policy"
+      },
+      {
+        "command": "ollamaCopilot.createPolicyTemplate",
+        "title": "Ollama Copilot: Create Policy Template"
+      },
+      {
+        "command": "ollamaCopilot.verifyCustodyTrail",
+        "title": "Ollama Copilot: Verify Custody Trail"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "ollama-copilot-devds.refreshModels",
+          "when": "view == ollamaCopilot.chatView",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        { "command": "ollama-copilot-devds.openChat" },
+        { "command": "ollama-copilot-devds.selectEndpoint" },
+        { "command": "ollama-copilot-devds.refreshModels" },
+        { "command": "ollamaCopilot.superChat.chooseProvider" },
+        { "command": "ollamaCopilot.superChat.setMode" },
+        { "command": "ollamaCopilot.superChat.setContext" },
+        { "command": "ollamaCopilot.setModelStrategy" },
+        { "command": "ollamaCopilot.superChat.resetSession" },
+        { "command": "ollamaCopilot.openCloudSignup" },
+        { "command": "ollamaCopilot.openCloudKeys" },
+        { "command": "ollamaCopilot.setCloudCatalogPolicy" },
+        { "command": "ollamaCopilot.setCloudApiKey" },
+        { "command": "ollamaCopilot.createPolicyTemplate" },
+        { "command": "ollamaCopilot.verifyCustodyTrail" }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "ollama-copilot-devds.openChat",
+        "key": "ctrl+alt+o",
+        "mac": "cmd+alt+o",
+        "when": "editorTextFocus"
+      }
+    ],
+    "configuration": {
+      "title": "Ollama Copilot",
+      "properties": {
+        "ollamaCopilot.activeEndpointId": {
+          "type": "string",
+          "default": "local",
+          "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints."
+        },
+        "ollamaCopilot.lastModel": {
+          "type": "string",
+          "default": "",
+          "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints."
+        },
+        "ollamaCopilot.endpoints": {
+          "type": "array",
+          "default": [
+            {
+              "id": "local",
+              "name": "Local (Ollama)",
+              "baseUrl": "http://localhost:11434",
+              "defaultModel": "tinyllama:latest"
+            },
+            {
+              "id": "cloud",
+              "name": "Cloud (ollama.com)",
+              "baseUrl": "https://ollama.com",
+              "defaultModel": "gpt-oss:120b-cloud"
+            }
+          ],
+          "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints.",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "baseUrl", "defaultModel"],
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "baseUrl": { "type": "string" },
+              "defaultModel": { "type": "string" }
+            }
+          }
+        },
+        "ollamaCopilot.maxContextChars": {
+          "type": "number",
+          "default": 12000,
+          "minimum": 0,
+          "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints."
+        },
+        "ollamaCopilot.maxContextTokens": {
+          "type": "number",
+          "default": 3000,
+          "minimum": 0,
+          "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints."
+        },
+        "ollamaCopilot.workspaceContextMaxFiles": {
+          "type": "number",
+          "default": 20,
+          "minimum": 5,
+          "maximum": 80,
+          "description": "Maximum files considered when building workspace context."
+        },
+        "ollamaCopilot.workspaceContextCacheMs": {
+          "type": "number",
+          "default": 8000,
+          "minimum": 0,
+          "maximum": 120000,
+          "description": "Workspace context cache time in milliseconds to reduce repeated scans."
+        },
+        "ollamaCopilot.validateCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Optional custom validation command used by Apply + Validate."
+        },
+        "ollamaCopilot.policyEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable policy guardrails before applying multi-file changes."
+        },
+        "ollamaCopilot.policyFile": {
+          "type": "string",
+          "default": ".ollama_policies.json",
+          "description": "Project policy file path relative to workspace root."
+        },
+        "ollamaCopilot.policyProfile": {
+          "type": "string",
+          "default": "balanced",
+          "enum": ["strict", "balanced", "experimental"],
+          "description": "Policy profile used when `.ollama_policies.json` provides profile overrides."
+        },
+        "ollamaCopilot.policyRiskThreshold": {
+          "type": "number",
+          "default": 70,
+          "minimum": 0,
+          "maximum": 200,
+          "description": "Risk threshold that requires explicit confirmation before apply."
+        },
+        "ollamaCopilot.policyDynamicThresholdEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Adjust policy threshold dynamically based on historical rollback rate."
+        },
+        "ollamaCopilot.policyRollbackPenaltyStartPct": {
+          "type": "number",
+          "default": 20,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Rollback rate percent that starts reducing effective policy threshold."
+        },
+        "ollamaCopilot.policyRollbackPenaltyMax": {
+          "type": "number",
+          "default": 25,
+          "minimum": 0,
+          "maximum": 90,
+          "description": "Maximum threshold reduction when rollback rate is high."
+        },
+        "ollamaCopilot.policyRequireJustification": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require a textual justification when overriding high-risk policy."
+        },
+        "ollamaCopilot.policyDualApprovalEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable dual-approval flow for high-risk policy overrides."
+        },
+        "ollamaCopilot.policySecondApproverRequired": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require a second, different approver during high-risk override."
+        },
+        "ollamaCopilot.policyTrustEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable reputation-based trust gate by domain before low-friction apply."
+        },
+        "ollamaCopilot.policyTrustMinScoreAutoApply": {
+          "type": "number",
+          "default": 70,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Minimum trust score required for domain auto-apply without extra trust confirmation."
+        },
+        "ollamaCopilot.policyTrustLowScoreRiskPenalty": {
+          "type": "number",
+          "default": 20,
+          "minimum": 0,
+          "maximum": 80,
+          "description": "Additional risk penalty when matched domain trust score is below threshold."
+        },
+        "ollamaCopilot.policyCustodySigningEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable HMAC + hash-chain tamper-evident signing for apply custody records."
+        },
+        "ollamaCopilot.policyGitProvenanceEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable optional Git provenance actions after apply."
+        },
+        "ollamaCopilot.policyGitCreateBranch": {
+          "type": "boolean",
+          "default": false,
+          "description": "Create branch `ollama/chain-<id>` before provenance commit."
+        },
+        "ollamaCopilot.policyGitCommitEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Create automated Git commit with chain metadata after apply."
+        },
+        "ollamaCopilot.policyGitCommitSignoff": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use --signoff in automated provenance commit."
+        },
+        "ollamaCopilot.policyGitCommitGpgSign": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use -S (GPG sign) in automated provenance commit when available."
+        },
+        "ollamaCopilot.policyGitBranchPrefix": {
+          "type": "string",
+          "default": "ollama/chain-",
+          "description": "Prefix used when creating provenance branch names."
+        },
+        "ollamaCopilot.timeoutMs": {
+          "type": "number",
+          "default": 45000,
+          "minimum": 1000,
+          "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints."
+        },
+        "ollamaCopilot.auditLogEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints."
+        },
+        "ollamaCopilot.telemetry.optIn": {
+          "type": "boolean",
+          "default": false,
+          "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints."
+        },
+        "ollamaCopilot.superChat.defaultMode": {
+          "type": "string",
+          "default": "devds",
+          "enum": ["code", "ds", "devds", "devops", "infra", "pbi"],
+          "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints."
+        },
+        "ollamaCopilot.superChat.defaultContext": {
+          "type": "string",
+          "default": "workspace",
+          "enum": ["off", "selection", "file", "workspace"],
+          "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints."
+        },
+        "ollamaCopilot.superChat.defaultTemperature": {
+          "type": "number",
+          "default": 0.3,
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints."
+        },
+        "ollamaCopilot.superChat.historyMaxChars": {
+          "type": "number",
+          "default": 8000,
+          "minimum": 0,
+          "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints."
+        },
+        "ollamaCopilot.cloud.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints."
+        },
+        "ollamaCopilot.cloud.catalogFallbackEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints."
+        },
+        "ollamaCopilot.cloud.catalogMaxSources": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 3,
+          "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints."
+        },
+        "ollamaCopilot.modelStrategy": {
+          "type": "string",
+          "default": "best_local",
+          "enum": ["best_local", "user_selected", "fastest"],
+          "description": "Local-first Copilot-style chat for Developers, Data Science, DevOps, and Power BI with local and cloud Ollama-compatible endpoints."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "yarn run package",
+    "compile": "yarn run check-types && yarn run lint && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "yarn run check-types && yarn run lint && node esbuild.js --production",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "eval:quality": "node tools/eval-quality.mjs",
+    "eval:cases": "node tools/eval-real-cases.mjs",
+    "eval:golden": "node tools/eval-golden.mjs",
+    "eval:governance": "node tools/eval-governance.mjs",
+    "golden:capture": "node tools/capture-golden-from-log.mjs",
+    "ci:quality": "yarn run check-types && yarn run lint && yarn run test && yarn run eval:quality && yarn run eval:cases && yarn run eval:golden",
+    "test": "tsc --project tsconfig.json && mocha \"dist/test/**/*.test.js\" --ignore \"dist/test/e2e/**\"",
+    "test:e2e": "tsc --project tsconfig.json && node dist/test/e2e/runTest.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.109.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^9.39.2",
+    "esbuild": "^0.27.2",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.54.0"
+  }
+}
+

@@ -1,0 +1,12 @@
+[
+  {
+    "name": "golden-review",
+    "output": "## Findings\n- High: Auth bypass at src/auth.ts:71\n- Medium: Missing input validation in src/api.ts:33\n- Low: Naming inconsistency in src/utils.ts:9\n## Risks\n- Privilege escalation possible.\n## Next Steps\n1. Add guard.\n2. Add tests.",
+    "mustContain": ["## Findings", "- High:", "- Medium:", "- Low:", "## Risks", "## Next Steps"]
+  },
+  {
+    "name": "golden-implementation",
+    "output": "## Result\nAdded safe retry logic with timeout.\n## Changes\n- Updated src/client.ts with abort signal.\n- Added tests in src/test/client.test.ts.\n## Validation\n- yarn run check-types\n- yarn run lint\n- yarn run test",
+    "mustContain": ["## Result", "## Changes", "## Validation", "yarn run check-types", "yarn run lint", "yarn run test"]
+  }
+]
